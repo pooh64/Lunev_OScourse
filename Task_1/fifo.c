@@ -8,22 +8,22 @@
 #include <inttypes.h>
 
 /// Fifo with pid list
-const char   FIFO_QUEUE_PATH[] = "./queue.fifo";
+const char   FIFO_QUEUE_PATH[] = "queue.fifo";
 
 struct ident_t {
 	pid_t pid;
 };
 
 /// Channels for sender + receiver pairs
-const char   FIFO_CHANNEL_PATH_PREFIX[] = "./channel.";
+const char   FIFO_CHANNEL_PATH_PREFIX[] = "channel.";
 const int    FIFO_CHANNEL_PATH_MAX = sizeof(FIFO_CHANNEL_PATH_PREFIX) + \
 				     sizeof(struct ident_t) * 2;
 const mode_t FIFO_MODE = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP	|	\
 			 S_IROTH | S_IWOTH;
 
 /// Timeouts
-const int FIFO_MAX_SLEEP_US = (2 >> 10) * (2 >> 10);
-const int FIFO_MIN_SLEEP_US = (2 >> 6);   
+const int FIFO_MAX_SLEEP_US = ((int) 2) << 20;
+const int FIFO_MIN_SLEEP_US = ((int) 2) << 6;   
 
 
 #define FDTOFD_CPY_BUF_SIZE 512
@@ -144,10 +144,9 @@ int receiver_wait_byte(int fd)
 		tmp = read(fd, &msg, sizeof(msg));
 		if (tmp > 0)
 			return 1;
-		if (tmp == 0)
-			continue;
-		if (tmp == -1 && errno != EAGAIN)
+		if (tmp == -1 && errno != EAGAIN) {
 			return -1;
+		}
 		usleep(delay);
 	}
 	return 0;
@@ -166,48 +165,56 @@ int receiver()
 		perror("Error: open");
 		return -1;
 	}
-	free(channel_path);
 	
 	// Open queue fifo and write id
 	if (mkfifo(FIFO_QUEUE_PATH, FIFO_MODE) == -1 && errno != EEXIST) {
 		perror("Error: mkfifo");
+		free(channel_path);
 		return -1;
 	}
 	int fd_queue = open(FIFO_QUEUE_PATH, O_RDWR);
 	if (fd_queue == -1) {
 		perror("Error: open");
+		free(channel_path);
 		return -1;
 	}
 	if (write(fd_queue, &id, sizeof(id)) != sizeof(id)) {
 		perror("Error: write");
+		free(channel_path);
 		return -1;
 	}
 	
 	// Wait for sender
 	if (receiver_wait_byte(fd_channel) != 1) {
 		fprintf(stderr, "Error: It seems the sender is dead\n");
+		free(channel_path);
 		return -1;
 	}
 	
 	// Close queue fifo
 	if (close(fd_queue) == -1) {
 		perror("Error: close");
+		free(channel_path);
 		return -1;
 	}
 	
 	if (fcntl(fd_channel, F_SETFL, O_RDONLY) == -1) {
 		perror("Error: fcntl");
+		free(channel_path);
 		return -1;
 	}
 	if (fdtofd_cpy(STDOUT_FILENO, fd_channel) == -1) {
 		perror("Error: fdtofd_cpy");
+		free(channel_path);
 		return -1;
 	}
 	if (close(fd_channel) == -1) {
 		perror("Error: close");
+		free(channel_path);
 		return -1;
 	}
 	
+	unlink(channel_path);
 	return 0;
 }
 
@@ -228,9 +235,15 @@ int sender(const char *inp_path)
 	
 	// Read id from queue
 	struct ident_t id;
-	if (read(fd_queue, &id, sizeof(id)) != sizeof(id)) {
-		perror("Error: read");
-		return -1;
+	while (1) {
+		int tmp = read(fd_queue, &id, sizeof(id));
+		if (tmp == sizeof(id))
+			break;
+		if (tmp == -1) {
+			perror("Error: read");
+			return -1;
+		}
+		usleep(FIFO_MIN_SLEEP_US);
 	}
 	
 	// Open channel

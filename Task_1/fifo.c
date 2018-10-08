@@ -215,6 +215,7 @@ int receiver()
 	}
 	
 	unlink(channel_path);
+	free(channel_path);
 	return 0;
 }
 
@@ -254,6 +255,7 @@ int sender(const char *inp_path)
 		perror("Error: open");
 		return -1;
 	}
+	free(channel_path);
 	if (fcntl(fd_channel, F_SETFL, O_WRONLY) == -1) {
 		perror("Error: fcntl");
 		return -1;
@@ -284,9 +286,11 @@ int sender(const char *inp_path)
 int main(int argc, char *argv[]) 
 {
 	if (argc == 2) {
-		sender(argv[1]);
+		if (sender(argv[1]) == -1)
+			perror("Error: sender");
 	} else if (argc == 1) {
-		receiver();
+		if (receiver() == -1)
+			perror("Error: receiver");
 	} else 
 		fprintf(stderr, "Error: wrong argument list\n");
 	return 0;

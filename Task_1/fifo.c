@@ -12,7 +12,7 @@ struct ident_t {
 	pid_t pid;
 };
 
-/// Fifo with pid list
+/// Fifo with id list
 const char   FIFO_QUEUE_PATH[] = "queue.fifo";
 const char   FIFO_CHANNEL_PATH_PREFIX[] = "channel.";
 const int    FIFO_CHANNEL_PATH_MAX = sizeof(FIFO_CHANNEL_PATH_PREFIX) + \
@@ -21,8 +21,8 @@ const mode_t FIFO_MODE = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP	|	\
 			 S_IROTH | S_IWOTH;
 
 /// Timeouts
-const int FIFO_MAX_SLEEP_US = ((int) 2) << 20;
-const int FIFO_MIN_SLEEP_US = ((int) 2) << 6;   
+const int FIFO_MAX_SLEEP_US = ((unsigned) 2) << 20;
+const int FIFO_MIN_SLEEP_US = ((unsigned) 0) << 1;
 
 /// Copy buffer size (atomic)
 const int FDTOFD_CPY_BUF_SIZE = 512;
@@ -133,14 +133,13 @@ int init_channel(char *path, mode_t mode)
 	return 0;
 }
 
-
 /// returns 1 if msg received
 int receiver_wait_byte(int fd)
 {
 	int delay = FIFO_MIN_SLEEP_US;
 	char msg;
 	int tmp;
-	for (; delay < FIFO_MAX_SLEEP_US; delay *= 2) {
+	for (; delay <= FIFO_MAX_SLEEP_US; delay *= 2) {
 		tmp = read(fd, &msg, sizeof(msg));
 		if (tmp > 0)
 			return 1;
@@ -153,14 +152,23 @@ int receiver_wait_byte(int fd)
 }	
 
 
-#define RECEIVER_ERR_RET(str_msg)			\
-do {							\
-	perror("Error: receiver: " str_msg);		\
-	fprintf(stderr, "\tLine %d\n", __LINE__);	\
-	unlink(channel_path);				\
-	free(channel_path);				\
-	return -1;					\
+#define ERR_HANDLER(str_msg)			\
+do {						\
+	fprintf(stderr, "Error: " str_msg);	\
+	fprintf(stderr, "Line: %d\n", __LINE__);\
+	unlink(channel_path);			\
+	free(channel_path);			\
+	return -1;				\
 } while (0)		
+
+#define ERR_HANDLER_PERR(str_msg)		\
+do {						\
+	perror("Error: " str_msg);		\
+	fprintf(stderr, "Line: %d\n", __LINE__);\
+	unlink(channel_path);			\
+	free(channel_path);			\
+	return -1;				\
+} while (0)	
 	
 int receiver()
 {	
@@ -168,62 +176,54 @@ int receiver()
 	struct ident_t id = get_id();
 	char *channel_path;
 	get_channel_path(&channel_path, id);
-	init_channel(channel_path, FIFO_MODE);
+	if (init_channel(channel_path, FIFO_MODE) == -1)
+		ERR_HANDLER("init channel");
+		
 	int fd_channel = open(channel_path, O_RDONLY | O_NONBLOCK);
 	if (fd_channel == -1)
-		RECEIVER_ERR_RET("open channel");
+		ERR_HANDLER_PERR("open channel");
 	
 	// Create/open queue and write id
 	if (mkfifo(FIFO_QUEUE_PATH, FIFO_MODE) == -1 && errno != EEXIST)
-		RECEIVER_ERR_RET("mkfifo queue");
+		ERR_HANDLER_PERR("mkfifo queue");
 
 	int fd_queue = open(FIFO_QUEUE_PATH, O_RDWR);
 	if (fd_queue == -1)
-		RECEIVER_ERR_RET("open queue");
+		ERR_HANDLER_PERR("open queue");
 	
 	if (write(fd_queue, &id, sizeof(id)) != sizeof(id))
-		RECEIVER_ERR_RET("write id to queue");
+		ERR_HANDLER_PERR("write id to queue");
 	
 	// Wait for sender
 	if (receiver_wait_byte(fd_channel) != 1)
-		RECEIVER_ERR_RET("It seems the sender is dead\n");
+		ERR_HANDLER("It seems the sender is dead\n");
 	
 	// Close queue fifo
 	if (close(fd_queue) == -1)
-		RECEIVER_ERR_RET("close queue");
+		ERR_HANDLER_PERR("close queue");
 	
 	// Set new flags, write data, close file
 	if (fcntl(fd_channel, F_SETFL, O_RDONLY) == -1)
-		RECEIVER_ERR_RET("fcntl channel");
+		ERR_HANDLER_PERR("fcntl channel");
 		
 	if (fdtofd_cpy(STDOUT_FILENO, fd_channel) == -1)
-		RECEIVER_ERR_RET("copy from channel to stdout");
+		ERR_HANDLER("copy from channel to stdout");
 		
 	if (close(fd_channel) == -1)
-		RECEIVER_ERR_RET("close channel");
+		ERR_HANDLER_PERR("close channel");
 	
 	unlink(channel_path);
 	free(channel_path);
 	return 0;
 }
 
-#undef RECEIVER_ERR_RET
-
-#define SENDER_ERR_RET(str_msg)				\
-do {							\
-	perror("Error: sender: " str_msg);		\
-	fprintf(stderr, "ErrLine %d\n", __LINE__);	\
-	unlink(channel_path);				\
-	free(channel_path);				\
-	return -1;					\
-} while (0)	
 
 int sender(const char *inp_path)
 {
 	// Open input file
 	int fd_inp = open(inp_path, O_RDONLY);
 	if (fd_inp == -1) {
-		perror("Error: sender: open input file");
+		perror("Error: open input file");
 		return -1;
 	}
 
@@ -233,7 +233,7 @@ int sender(const char *inp_path)
 		fd_queue = open(FIFO_QUEUE_PATH, O_RDONLY);
 		if (fd_queue == -1) {
 			if (errno != ENOENT) {
-				perror("Error: open");
+				perror("Error: open queue");
 				return -1;
 			}
 		} else
@@ -248,7 +248,7 @@ int sender(const char *inp_path)
 		if (tmp == sizeof(id))
 			break;
 		if (tmp == -1) {
-			perror("Error: read");
+			perror("Error: Sender: read id");
 			return -1;
 		}
 		usleep(FIFO_MIN_SLEEP_US);
@@ -259,37 +259,44 @@ int sender(const char *inp_path)
 	get_channel_path(&channel_path, id);
 	int fd_channel = open(channel_path, O_NONBLOCK | O_WRONLY);
 	if (fd_channel == -1) 
-		SENDER_ERR_RET("It seems the receiver is dead");
+		ERR_HANDLER_PERR("It seems the receiver is dead");
 		
 	// Set new flags
 	if (fcntl(fd_channel, F_SETFL, O_WRONLY) == -1)
-		SENDER_ERR_RET("fcntl channel");
+		ERR_HANDLER_PERR("fcntl channel");
 	
 	// Sending msg that sender is ready
 	char msg = 1;
 	if (buftofd_cpy(fd_channel, &msg, sizeof(msg)) == -1)
-		SENDER_ERR_RET("send 1byte-msg");
+		ERR_HANDLER("send sync-msg");
 		
 	// Send data
 	if (fdtofd_cpy(fd_channel, fd_inp) == -1)
-		SENDER_ERR_RET("copy from input to channel");
+		ERR_HANDLER("copy from input to channel");
+		
+	if (close(fd_channel) == -1)
+		ERR_HANDLER_PERR("close channel");
+		
+	if (close(fd_inp) == -1)
+		ERR_HANDLER_PERR("close input file");
 		
 	unlink(channel_path);
 	free(channel_path);
 	return 0;
 }
 
-#undef SENDER_ERR_RET
+#undef ERR_HANDLER
+#undef ERR_HANDLER_PERR
 
 
 int main(int argc, char *argv[]) 
 {
 	if (argc == 2) {
 		if (sender(argv[1]) == -1)
-			fprintf(stderr, "Error: sender failed\n");
+			fprintf(stderr, "Error: Sender failed\n");
 	} else if (argc == 1) {
 		if (receiver() == -1)
-			fprintf(stderr, "Error: receiver failed\n");
+			fprintf(stderr, "Error: Receiver failed\n");
 	} else 
 		fprintf(stderr, "Error: wrong argument list\n");
 	return 0;

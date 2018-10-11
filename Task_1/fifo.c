@@ -115,7 +115,7 @@ int init_channel(char *path, mode_t mode)
 	
 	// Channel exist and open for read
 	while (1) {
-		/// linear usleep here
+		usleep(FIFO_MIN_SLEEP_US);
 		if (close(fd) == -1) {
 			perror("Error: close");
 			return -1;
@@ -164,7 +164,7 @@ do {							\
 	
 int receiver()
 {	
-	// Prepare channel
+	// Prepare and open channel
 	struct ident_t id = get_id();
 	char *channel_path;
 	get_channel_path(&channel_path, id);
@@ -173,10 +173,10 @@ int receiver()
 	if (fd_channel == -1)
 		RECEIVER_ERR_RET("open channel");
 	
-	// Open queue fifo and write id
+	// Create/open queue and write id
 	if (mkfifo(FIFO_QUEUE_PATH, FIFO_MODE) == -1 && errno != EEXIST)
 		RECEIVER_ERR_RET("mkfifo queue");
-		
+
 	int fd_queue = open(FIFO_QUEUE_PATH, O_RDWR);
 	if (fd_queue == -1)
 		RECEIVER_ERR_RET("open queue");
@@ -192,6 +192,7 @@ int receiver()
 	if (close(fd_queue) == -1)
 		RECEIVER_ERR_RET("close queue");
 	
+	// Set new flags, write data, close file
 	if (fcntl(fd_channel, F_SETFL, O_RDONLY) == -1)
 		RECEIVER_ERR_RET("fcntl channel");
 		
@@ -219,7 +220,14 @@ do {							\
 
 int sender(const char *inp_path)
 {
-	// open channel.pid
+	// Open input file
+	int fd_inp = open(inp_path, O_RDONLY);
+	if (fd_inp == -1) {
+		perror("Error: sender: open input file");
+		return -1;
+	}
+
+	// Open queue
 	int fd_queue;
 	while (1) {
 		fd_queue = open(FIFO_QUEUE_PATH, O_RDONLY);
@@ -230,6 +238,7 @@ int sender(const char *inp_path)
 			}
 		} else
 			break;
+		usleep(FIFO_MIN_SLEEP_US);
 	}
 	
 	// Read id from queue
@@ -245,13 +254,14 @@ int sender(const char *inp_path)
 		usleep(FIFO_MIN_SLEEP_US);
 	}
 	
-	// Open channel
+	// Open channel by id
 	char *channel_path;
 	get_channel_path(&channel_path, id);
 	int fd_channel = open(channel_path, O_NONBLOCK | O_WRONLY);
 	if (fd_channel == -1) 
 		SENDER_ERR_RET("It seems the receiver is dead");
 		
+	// Set new flags
 	if (fcntl(fd_channel, F_SETFL, O_WRONLY) == -1)
 		SENDER_ERR_RET("fcntl channel");
 	
@@ -259,12 +269,8 @@ int sender(const char *inp_path)
 	char msg = 1;
 	if (buftofd_cpy(fd_channel, &msg, sizeof(msg)) == -1)
 		SENDER_ERR_RET("send 1byte-msg");
-	
-	// Open input file
-	int fd_inp = open(inp_path, O_RDONLY);
-	if (fd_inp == -1) 
-		SENDER_ERR_RET("open input file");
 		
+	// Send data
 	if (fdtofd_cpy(fd_channel, fd_inp) == -1)
 		SENDER_ERR_RET("copy from input to channel");
 		
@@ -272,6 +278,8 @@ int sender(const char *inp_path)
 	free(channel_path);
 	return 0;
 }
+
+#undef SENDER_ERR_RET
 
 
 int main(int argc, char *argv[]) 

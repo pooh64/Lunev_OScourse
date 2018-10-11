@@ -1,3 +1,5 @@
+// 3sem mipt: Task_1 
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -21,8 +23,9 @@ const mode_t FIFO_MODE = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP	|	\
 			 S_IROTH | S_IWOTH;
 
 /// Timeouts
-const int FIFO_MAX_SLEEP_US = ((unsigned) 2) << 20;
-const int FIFO_MIN_SLEEP_US = ((unsigned) 0) << 1;
+const unsigned FIFO_MAX_SLEEP_US   = ((unsigned) 2) << 22;
+const unsigned FIFO_MIN_SLEEP_US   = ((unsigned) 2) << 2;
+const unsigned FIFO_CONST_SLEEP_US = ((unsigned) 2) << 14;
 
 /// Copy buffer size (atomic)
 const int FDTOFD_CPY_BUF_SIZE = 512;
@@ -113,9 +116,9 @@ int init_channel(char *path, mode_t mode)
 			return 0;
 	}	
 	
-	// Channel exist and open for read
+	// Channel exist and open for read (equal id prot)
 	while (1) {
-		usleep(FIFO_MIN_SLEEP_US);
+		usleep(FIFO_CONST_SLEEP_US);
 		if (close(fd) == -1) {
 			perror("Error: close");
 			return -1;
@@ -136,13 +139,14 @@ int init_channel(char *path, mode_t mode)
 /// returns 1 if msg received
 int receiver_wait_byte(int fd)
 {
-	int delay = FIFO_MIN_SLEEP_US;
+	unsigned int delay = FIFO_MIN_SLEEP_US; 
 	char msg;
 	int tmp;
 	for (; delay <= FIFO_MAX_SLEEP_US; delay *= 2) {
 		tmp = read(fd, &msg, sizeof(msg));
-		if (tmp > 0)
+		if (tmp > 0) {
 			return 1;
+		}
 		if (tmp == -1 && errno != EAGAIN) {
 			return -1;
 		}
@@ -186,7 +190,7 @@ int receiver()
 	// Create/open queue and write id
 	if (mkfifo(FIFO_QUEUE_PATH, FIFO_MODE) == -1 && errno != EEXIST)
 		ERR_HANDLER_PERR("mkfifo queue");
-
+	
 	int fd_queue = open(FIFO_QUEUE_PATH, O_RDWR);
 	if (fd_queue == -1)
 		ERR_HANDLER_PERR("open queue");
@@ -194,23 +198,23 @@ int receiver()
 	if (write(fd_queue, &id, sizeof(id)) != sizeof(id))
 		ERR_HANDLER_PERR("write id to queue");
 	
-	// Wait for sender
+	// Wait for msg from sender
 	if (receiver_wait_byte(fd_channel) != 1)
 		ERR_HANDLER("It seems the sender is dead\n");
-	
-	// Close queue fifo
-	if (close(fd_queue) == -1)
-		ERR_HANDLER_PERR("close queue");
 	
 	// Set new flags, write data, close file
 	if (fcntl(fd_channel, F_SETFL, O_RDONLY) == -1)
 		ERR_HANDLER_PERR("fcntl channel");
 		
+	// Send data
 	if (fdtofd_cpy(STDOUT_FILENO, fd_channel) == -1)
 		ERR_HANDLER("copy from channel to stdout");
 		
+	// Close fd
 	if (close(fd_channel) == -1)
 		ERR_HANDLER_PERR("close channel");
+	if (close(fd_queue) == -1)
+		ERR_HANDLER_PERR("close queue");
 	
 	unlink(channel_path);
 	free(channel_path);
@@ -238,7 +242,7 @@ int sender(const char *inp_path)
 			}
 		} else
 			break;
-		usleep(FIFO_MIN_SLEEP_US);
+		usleep(FIFO_CONST_SLEEP_US);
 	}
 	
 	// Read id from queue
@@ -251,7 +255,7 @@ int sender(const char *inp_path)
 			perror("Error: Sender: read id");
 			return -1;
 		}
-		usleep(FIFO_MIN_SLEEP_US);
+		usleep(FIFO_CONST_SLEEP_US);
 	}
 	
 	// Open channel by id
@@ -265,7 +269,7 @@ int sender(const char *inp_path)
 	if (fcntl(fd_channel, F_SETFL, O_WRONLY) == -1)
 		ERR_HANDLER_PERR("fcntl channel");
 	
-	// Sending msg that sender is ready
+	// Send msg that sender is ready
 	char msg = 1;
 	if (buftofd_cpy(fd_channel, &msg, sizeof(msg)) == -1)
 		ERR_HANDLER("send sync-msg");
@@ -274,11 +278,13 @@ int sender(const char *inp_path)
 	if (fdtofd_cpy(fd_channel, fd_inp) == -1)
 		ERR_HANDLER("copy from input to channel");
 		
+	// Close fd
 	if (close(fd_channel) == -1)
-		ERR_HANDLER_PERR("close channel");
-		
+		ERR_HANDLER_PERR("close channel");		
 	if (close(fd_inp) == -1)
 		ERR_HANDLER_PERR("close input file");
+	if (close(fd_queue) == -1)
+		ERR_HANDLER_PERR("close queue");		
 		
 	unlink(channel_path);
 	free(channel_path);

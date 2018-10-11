@@ -1,10 +1,14 @@
 rm -f out.txt
-for((i = 0; i < 10; i++))
+for((i = 0; i < 5000; i++))
 do
-	valgrind --tool=cachegrind ./a.out data.txt 	&
+	./a.out data.txt 	&
 done
 
-for((i = 0; i < 10; i++))
+pgrep a.out
+
+for((i = 0; i < 5000; i++))
 do
-	valgrind --tool=cachegrind ./a.out >>out.txt 	&
+	./a.out >>out.txt 	&
 done
+
+

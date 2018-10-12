@@ -25,10 +25,10 @@ const mode_t FIFO_MODE = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP	|	\
 /// Timeouts
 const unsigned FIFO_MAX_SLEEP_US   = ((unsigned) 2) << 22;
 const unsigned FIFO_MIN_SLEEP_US   = ((unsigned) 2) << 2;
-const unsigned FIFO_CONST_SLEEP_US = ((unsigned) 2) << 14;
 
 /// Copy buffer size (atomic)
 const int FDTOFD_CPY_BUF_SIZE = 512;
+
 
 ssize_t buftofd_cpy(int fd_out, char *buf, size_t count)
 {	
@@ -79,6 +79,7 @@ ssize_t fdtofd_cpy(int fd_out, int fd_in)
 	return sumary;
 }
 
+
 struct ident_t get_id()
 {
 	struct ident_t id;
@@ -97,7 +98,6 @@ int get_channel_path(char **buf_p, struct ident_t id)
 int init_channel(char *path, mode_t mode)
 {
 	int fd;	
-	
 	// Try to create fifo
 	if (mkfifo(path, mode) != -1)
 		return 0;
@@ -105,37 +105,10 @@ int init_channel(char *path, mode_t mode)
 		perror("Error: mkfifo");
 		return -1;
 	}
-
-	// If channel exist
-	fd = open(path, O_WRONLY | O_NONBLOCK);
-	if (fd == -1) {
-		if (errno != ENXIO) {	// If channel closed for write
-			perror("Error: open");
-			return -1;
-		} else // Channel closed
-			return 0;
-	}	
-	
-	// Channel exist and open for read (equal id prot)
-	while (1) {
-		usleep(FIFO_CONST_SLEEP_US);
-		if (close(fd) == -1) {
-			perror("Error: close");
-			return -1;
-		}
-		fd = open(path, O_WRONLY | O_NONBLOCK);
-		if (fd != -1)
-			continue;
-		if (errno == ENXIO) // Channel closed for read
-			break;
-		else {
-			perror("Error: open");
-			return -1;
-		}
-	}
 	return 0;
 }
 
+/// [note]: This is critical section.
 /// returns 1 if msg received
 int receiver_wait_byte(int fd)
 {
@@ -172,8 +145,15 @@ do {						\
 	unlink(channel_path);			\
 	free(channel_path);			\
 	return -1;				\
-} while (0)	
-	
+} while (0)
+
+#define ERR_PERR_RET(str_msg)			\
+do {						\
+	perror("Error: " str_msg);		\
+	return -1;				\
+} while (0)
+
+
 int receiver()
 {	
 	// Prepare and open channel
@@ -226,37 +206,20 @@ int sender(const char *inp_path)
 {
 	// Open input file
 	int fd_inp = open(inp_path, O_RDONLY);
-	if (fd_inp == -1) {
-		perror("Error: open input file");
-		return -1;
-	}
+	if (fd_inp == -1)
+		ERR_PERR_RET("open input file");
 
-	// Open queue
-	int fd_queue;
-	while (1) {
-		fd_queue = open(FIFO_QUEUE_PATH, O_RDONLY);
-		if (fd_queue == -1) {
-			if (errno != ENOENT) {
-				perror("Error: open queue");
-				return -1;
-			}
-		} else
-			break;
-		usleep(FIFO_CONST_SLEEP_US);
-	}
-	
+	// Create/open queue
+	if (mkfifo(FIFO_QUEUE_PATH, FIFO_MODE) == -1 && errno != EEXIST)
+		ERR_PERR_RET("mkfifo queue");
+	int fd_queue = open(FIFO_QUEUE_PATH, O_RDWR);
+	if (fd_queue == -1)
+		ERR_PERR_RET("open queue");
+
 	// Read id from queue
 	struct ident_t id;
-	while (1) {
-		int tmp = read(fd_queue, &id, sizeof(id));
-		if (tmp == sizeof(id))
-			break;
-		if (tmp == -1) {
-			perror("Error: Sender: read id");
-			return -1;
-		}
-		usleep(FIFO_CONST_SLEEP_US);
-	}
+	if (read(fd_queue, &id, sizeof(id)) != sizeof(id))
+		ERR_PERR_RET("read id from queue");
 	
 	// Open channel by id
 	char *channel_path;
@@ -293,7 +256,7 @@ int sender(const char *inp_path)
 
 #undef ERR_HANDLER
 #undef ERR_HANDLER_PERR
-
+#undef ERR_PERR_RET
 
 int main(int argc, char *argv[]) 
 {

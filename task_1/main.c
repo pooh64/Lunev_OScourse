@@ -90,7 +90,8 @@ int get_channel_path(char **buf_p, struct ident_t id)
 	*buf_p = malloc(sizeof(char) * FIFO_CHANNEL_PATH_MAX);
 	if (buf_p == NULL)
 		return -1;
-	return sprintf(*buf_p, "%s%jx\0", FIFO_CHANNEL_PATH_PREFIX, (uintmax_t) id.pid);
+	return sprintf(*buf_p, "%s%jx\0",\
+			FIFO_CHANNEL_PATH_PREFIX, (uintmax_t) id.pid);
 }
 
 int init_channel(char *path, mode_t mode)

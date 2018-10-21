@@ -1,5 +1,3 @@
-// 3sem mipt: Task_1 
-
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -9,7 +7,7 @@
 #include <errno.h>
 #include <inttypes.h>
 
-// Value to identify pair
+/// Value to identify pair
 struct ident_t {
 	pid_t pid;
 };
@@ -22,11 +20,11 @@ const int    FIFO_CHANNEL_PATH_MAX = sizeof(FIFO_CHANNEL_PATH_PREFIX) + \
 const mode_t FIFO_MODE = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP	|	\
 			 S_IROTH | S_IWOTH;
 
-/// Timeouts
+// Timeouts
 const unsigned FIFO_MAX_SLEEP_US   = ((unsigned) 2) << 22;
 const unsigned FIFO_MIN_SLEEP_US   = ((unsigned) 2) << 2;
 
-/// Copy buffer size (atomic)
+// Copy buffer size (atomic)
 const int FDTOFD_CPY_BUF_SIZE = 512;
 
 

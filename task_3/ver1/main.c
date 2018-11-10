@@ -157,7 +157,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int f
 			perror("Error: semop");
 			return -1;
 		}
-
+		
 		if (len == 0)
 			break;
 	}
@@ -193,7 +193,6 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 			return -1;
 		}
 
-		// success
 		if (len == 0)
 			break;
 	}

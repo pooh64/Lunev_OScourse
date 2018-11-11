@@ -4,14 +4,17 @@
 int pair_capture(int semid, struct syncbuf self, struct syncbuf othr, int (*self_init)(int))
 {
 	struct sembuf sop_buf[4];
-	int n_sop = 0;
+	int sop_n = 0;
 	
 	// Capture lock
 	SOPBUF_ADD(self.lock,  0, 0);
 	SOPBUF_ADD(self.actv,  0, 0);
 	SOPBUF_ADD(othr.actv,  0, 0);
 	SOPBUF_ADD(self.lock,  1, SEM_UNDO);
-	SOPBUF_SEMOP();
+	if (SOPBUF_SEMOP() == -1) {
+		perror("Error: semop");
+		return -1;
+	}
 	
 	// User-defined init
 	if (self_init != NULL && (*self_init)(semid) == -1) {
@@ -23,14 +26,20 @@ int pair_capture(int semid, struct syncbuf self, struct syncbuf othr, int (*self
 	SOPBUF_ADD(othr.lock, -1, 0);
 	SOPBUF_ADD(othr.lock,  1, 0);
 	SOPBUF_ADD(self.actv,  1, SEM_UNDO);
-	SEMBUF_SEMOP();
+	if (SOPBUF_SEMOP() == -1) {
+		perror("Error: semop");
+		return -1;
+	}
 	
 	// Wait until the other is activated
 	SOPBUF_ADD(othr.lock, -1, IPC_NOWAIT);
 	SOPBUF_ADD(othr.lock,  1, 0);
 	SOPBUF_ADD(othr.actv, -1, 0);
 	SOPBUF_ADD(othr.actv,  1, 0);
-	SEMBUF_SEMOP();
+	if (SOPBUF_SEMOP() == -1) {
+		perror("Error: semop");
+		return -1;
+	}
 	
 	return 0;
 }
@@ -39,7 +48,7 @@ int pair_capture(int semid, struct syncbuf self, struct syncbuf othr, int (*self
 int pair_release(int semid, struct syncbuf self, struct syncbuf othr)
 {
 	struct sembuf sop_buf[5];
-	int n_sop = 0;
+	int sop_n = 0;
 	
 	// Process ready for exit
 	SOPBUF_ADD(self.done,  1, SEM_UNDO);

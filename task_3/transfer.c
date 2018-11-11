@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <stdlib.h>
 #include "sync.h"
 
 const char KEY_PATHNAME[] = "key.key";
@@ -60,6 +61,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int f
 {
 	struct sembuf sop_buf[3];
 	int sop_n = 0;
+	ssize_t len;
 
 	do {
 		// Check othr process, p(empty)
@@ -74,7 +76,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int f
 			exit(EXIT_FAILURE);
 		}
 
-		ssize_t len = fdtomem_cpy(fd, (char*) shm + sizeof(size_t), shm_size - sizeof (size_t));
+		len = fdtomem_cpy(fd, (char*) shm + sizeof(size_t), shm_size - sizeof (size_t));
 		if (len == -1) {
 			fprintf(stderr, "Error: fdtomem_cpy failed\n");
 			exit(EXIT_FAILURE);
@@ -95,6 +97,7 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 {
 	struct sembuf sop_buf[3];
 	int sop_n = 0;
+	ssize_t len;
 
 	do {
 		// Check othr process, p(fill)
@@ -109,7 +112,7 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 			exit(EXIT_FAILURE);
 		}
 
-		ssize_t len = *(ssize_t*) shm;
+		len = *(ssize_t*) shm;
 		if (len == -1) {
 			fprintf(stderr, "Error: sender fdtomem_cpy failed\n");
 			exit(EXIT_FAILURE);

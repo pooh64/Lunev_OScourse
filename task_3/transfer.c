@@ -5,27 +5,25 @@
 const char KEY_PATHNAME[] = "key.key";
 
 enum SEM_NUMS {
-	SEM_FILL,	// Do not use with SEM_UNDO!
-	SEM_EMPTY,	// Do not use with SEM_UNDO!
-	
+	SEM_FILL,		// Do not use with SEM_UNDO!
+	SEM_EMPTY,		// Do not use with SEM_UNDO!
+
 	SEM_SND_LOCK,
 	SEM_SND_ACTV,
 	SEM_SND_DONE,
-	
+
 	SEM_REC_LOCK,
 	SEM_REC_ACTV,
 	SEM_REC_DONE,
-	
-	SEM_NUM, 	// sizeof
+
+	SEM_NUM,
 };
 
-
 ssize_t memtofd_cpy(int fd, char *buf, size_t count)
-{	
+{
 	ssize_t tmp = 1;
 	size_t len = count;
-	while (len && tmp)
-	{
+	while (len && tmp) {
 		tmp = write(fd, buf, len);
 		if (tmp == -1) {
 			if (errno != EINTR)
@@ -39,11 +37,10 @@ ssize_t memtofd_cpy(int fd, char *buf, size_t count)
 }
 
 ssize_t fdtomem_cpy(int fd, char *buf, size_t count)
-{	
+{
 	ssize_t tmp = 1;
 	size_t len = count;
-	while (len && tmp)
-	{
+	while (len && tmp) {
 		tmp = read(fd, buf, len);
 		if (tmp == -1) {
 			if (errno != EINTR)
@@ -56,8 +53,8 @@ ssize_t fdtomem_cpy(int fd, char *buf, size_t count)
 	return count - len;
 }
 
-
-int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int fd)
+int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size,
+	       int fd)
 {
 	struct sembuf sop_buf[3];
 	int sop_n = 0;
@@ -66,9 +63,9 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int f
 	do {
 		// Check othr process, p(empty)
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
-		SOPBUF_ADD(othr.actv,  1, 0);
+		SOPBUF_ADD(othr.actv, 1, 0);
 		SOPBUF_ADD(SEM_EMPTY, -1, 0);
-		if (SOPBUF_SEMOP() == -1) {
+		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 2 */
 			if (errno == EAGAIN)
 				fprintf(stderr, "Error: receiver is dead\n");
 			else
@@ -76,16 +73,17 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size, int f
 			exit(EXIT_FAILURE);
 		}
 
-		len = fdtomem_cpy(fd, (char*) shm + sizeof(size_t), shm_size - sizeof (size_t));
+		len = fdtomem_cpy(fd, (char *)shm + sizeof(size_t),
+				  shm_size - sizeof(size_t));
 		if (len == -1) {
 			fprintf(stderr, "Error: fdtomem_cpy failed\n");
 			exit(EXIT_FAILURE);
 		}
-		*(ssize_t*) shm = len;
-		
+		*(ssize_t *) shm = len;
+
 		// v(fill)
-		SOPBUF_ADD(SEM_FILL,  1, 0);
-		if (SOPBUF_SEMOP() == -1) {
+		SOPBUF_ADD(SEM_FILL, 1, 0);
+		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 2 */
 			perror("Error: semop");
 			exit(EXIT_FAILURE);
 		}
@@ -102,9 +100,9 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 	do {
 		// Check othr process, p(fill)
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
-		SOPBUF_ADD(othr.actv,  1, 0);
-		SOPBUF_ADD(SEM_FILL,  -1, 0);
-		if (SOPBUF_SEMOP() == -1) {
+		SOPBUF_ADD(othr.actv, 1, 0);
+		SOPBUF_ADD(SEM_FILL, -1, 0);
+		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 2 */
 			if (errno == EAGAIN)
 				fprintf(stderr, "Error: sender is dead\n");
 			else
@@ -112,20 +110,19 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 			exit(EXIT_FAILURE);
 		}
 
-		len = *(ssize_t*) shm;
+		len = *(ssize_t *) shm;
 		if (len == -1) {
 			fprintf(stderr, "Error: sender fdtomem_cpy failed\n");
 			exit(EXIT_FAILURE);
 		}
-		len = memtofd_cpy(fd, (char*) shm + sizeof(size_t), len);
+		len = memtofd_cpy(fd, (char *)shm + sizeof(size_t), len);
 		if (len == -1) {
 			fprintf(stderr, "Error: memtofd_cpy failed\n");
 			exit(EXIT_FAILURE);
 		}
-
 		// v(empty)
-		SOPBUF_ADD(SEM_EMPTY,  1, 0);
-		if (SOPBUF_SEMOP() == -1) {
+		SOPBUF_ADD(SEM_EMPTY, 1, 0);
+		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 2 */
 			perror("Error: semop\n");
 			exit(EXIT_FAILURE);
 		}
@@ -149,18 +146,19 @@ int sender_init_run(int semid)
 	return 0;
 }
 
-int sender(int semid, struct syncbuf self, struct syncbuf othr, void *shm, size_t shm_size, int fd)
+int sender(int semid, struct syncbuf self, struct syncbuf othr, void *shm,
+	   size_t shm_size, int fd)
 {
-	/// Sync pair
+	// Capture and sync pair
 	if (pair_capture(semid, self, othr, &sender_init_run) == -1) {
 		fprintf(stderr, "Error: pair_capture\n");
 		return -1;
 	}
-	/// Run
-	int tmp = sender_run(semid, othr, shm, shm_size, fd); 
+	// Run
+	int tmp = sender_run(semid, othr, shm, shm_size, fd);
 	if (tmp == -1)
 		fprintf(stderr, "Error: sender_run failed\n");
-	/// Unlock pair
+	// Unlock pair
 	if (pair_release(semid, self, othr) == -1) {
 		perror("Error: pair_release");
 		return -1;
@@ -170,18 +168,19 @@ int sender(int semid, struct syncbuf self, struct syncbuf othr, void *shm, size_
 	return 0;
 }
 
-int receiver(int semid, struct syncbuf self, struct syncbuf othr, void *shm, int fd)
+int receiver(int semid, struct syncbuf self, struct syncbuf othr, void *shm,
+	     int fd)
 {
-	/// Get pair
+	// Capture and sync pair
 	if (pair_capture(semid, self, othr, NULL) == -1) {
 		fprintf(stderr, "Error: pair_capture\n");
 		return -1;
 	}
-	/// Run
-	int tmp = receiver_run(semid, othr, shm, fd); 
+	// Run
+	int tmp = receiver_run(semid, othr, shm, fd);
 	if (tmp == -1)
 		fprintf(stderr, "Error: reciever_run failed\n");
-	/// Unlock pair
+	// Unlock pair
 	if (pair_release(semid, self, othr) == -1) {
 		perror("Error: pair_release");
 		return -1;
@@ -191,6 +190,37 @@ int receiver(int semid, struct syncbuf self, struct syncbuf othr, void *shm, int
 	return 0;
 }
 
+int get_resources(const char *path, int *semid, int *shmid, void **shm_p,
+		  size_t * shm_size)
+{
+	int key_fd = creat(path, 0644);
+	if (key_fd == -1 && errno != EEXIST) {
+		perror("Error: creat");
+		return -1;
+	}
+	key_t key = ftok(path, 0);
+	if (key == -1) {
+		perror("Error: ftok");
+		return -1;
+	}
+	*semid = semget(key, SEM_NUM, 0644 | IPC_CREAT);
+	if (*semid == -1) {
+		perror("Error: semget");
+		return -1;
+	}
+	*shm_size = sysconf(_SC_PAGESIZE);
+	*shmid = shmget(key, *shm_size, 0644 | IPC_CREAT);
+	if (shmid == -1) {
+		perror("Error: shmget");
+		return -1;
+	}
+	*shm_p = shmat(*shmid, NULL, 0);
+	if (*shm_p == (void *)-1) {
+		perror("Error: shmat");
+		return -1;
+	}
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -199,39 +229,19 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	// Getting int semid, void *shm, long shm_size
-	int key_fd = creat(KEY_PATHNAME, 0644);
-	if (key_fd == -1 && errno != EEXIST) {
-		perror("Error: creat");
-		return -0;
+	int semid, shmid;
+	void *shm;
+	long shm_size;
+	if (get_resources(KEY_PATHNAME, &semid, &shmid, &shm, &shm_size) == -1) {
+		fprintf("Error: get_resorces failed\n");
+		return -1;
 	}
-	key_t key = ftok(KEY_PATHNAME, 0);
-	if (key == -1) {
-		perror("Error: ftok");
-		return 0;
-	}
-	int semid = semget(key, SEM_NUM, 0644 | IPC_CREAT);
-	if (semid == -1) {
-		perror("Error: semget");
-		return 0;
-	}
-	long shm_size = sysconf(_SC_PAGESIZE);
-	int shmid = shmget(key, shm_size, 0644 | IPC_CREAT);
-	if (shmid == -1) {
-		perror("Error: shmget");
-		return 0;
-	}
-	void *shm = shmat(shmid, NULL, 0);
-	if (shm == (void*) -1) {
-		perror("Error: shmat");
-		return 0;
-	}
-	
+
 	struct syncbuf rec;
 	rec.lock = SEM_REC_LOCK;
 	rec.actv = SEM_REC_ACTV;
 	rec.done = SEM_REC_DONE;
-	
+
 	struct syncbuf snd;
 	snd.lock = SEM_SND_LOCK;
 	snd.actv = SEM_SND_ACTV;

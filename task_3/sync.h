@@ -3,18 +3,17 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
-// #include <fcntl.h>
 #include <unistd.h>
 
 #include <stdio.h>
 #include <errno.h>
 
 union semun {
-	int          	 val;	/* Value for SETVAL */
+	int val;		/* Value for SETVAL */
 	struct semid_ds *buf;	/* Buffer for IPC_STAT, IPC_SET */
-	unsigned short  *array;	/* Array for GETALL, SETALL */
-	struct seminfo  *__buf;	/* Buffer for IPC_INFO
-				(Linux-specific) */
+	unsigned short *array;	/* Array for GETALL, SETALL */
+	struct seminfo *__buf;	/* Buffer for IPC_INFO
+				   (Linux-specific) */
 };
 
 struct syncbuf {
@@ -38,6 +37,6 @@ struct syncbuf {
 		sop_status;					\
 	})
 
-
-int pair_capture(int semid, struct syncbuf self, struct syncbuf othr, int (*self_init)(int));
+int pair_capture(int semid, struct syncbuf self, struct syncbuf othr,
+		 int (*self_init) (int));
 int pair_release(int semid, struct syncbuf self, struct syncbuf othr);

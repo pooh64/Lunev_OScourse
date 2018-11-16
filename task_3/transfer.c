@@ -65,7 +65,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size,
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
 		SOPBUF_ADD(othr.actv, 1, 0);
 		SOPBUF_ADD(SEM_EMPTY, -1, 0);
-		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 2 */
+		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 3 */
 			if (errno == EAGAIN)
 				fprintf(stderr, "Error: receiver is dead\n");
 			else
@@ -83,7 +83,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size,
 
 		// v(fill)
 		SOPBUF_ADD(SEM_FILL, 1, 0);
-		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 2 */
+		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 3 */
 			perror("Error: semop");
 			exit(EXIT_FAILURE);
 		}
@@ -102,7 +102,7 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
 		SOPBUF_ADD(othr.actv, 1, 0);
 		SOPBUF_ADD(SEM_FILL, -1, 0);
-		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 2 */
+		if (SOPBUF_SEMOP() == -1) {	/* Enter critical section 3 */
 			if (errno == EAGAIN)
 				fprintf(stderr, "Error: sender is dead\n");
 			else
@@ -122,7 +122,7 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 		}
 		// v(empty)
 		SOPBUF_ADD(SEM_EMPTY, 1, 0);
-		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 2 */
+		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 3 */
 			perror("Error: semop\n");
 			exit(EXIT_FAILURE);
 		}
@@ -210,7 +210,7 @@ int get_resources(const char *path, int *semid, int *shmid, void **shm_p,
 	}
 	*shm_size = sysconf(_SC_PAGESIZE);
 	*shmid = shmget(key, *shm_size, 0644 | IPC_CREAT);
-	if (shmid == -1) {
+	if (*shmid == -1) {
 		perror("Error: shmget");
 		return -1;
 	}
@@ -233,7 +233,7 @@ int main(int argc, char *argv[])
 	void *shm;
 	long shm_size;
 	if (get_resources(KEY_PATHNAME, &semid, &shmid, &shm, &shm_size) == -1) {
-		fprintf("Error: get_resorces failed\n");
+		fprintf(stderr, "Error: get_resorces failed\n");
 		return -1;
 	}
 

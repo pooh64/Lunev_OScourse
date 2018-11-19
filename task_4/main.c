@@ -33,7 +33,7 @@ void handle_signal(int sig)
 	CAUGHT_SIG = sig;
 }
 
-int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
+int byte_receive(pid_t pid, uint8_t * val_p, sigset_t * set)
 {
 	uint8_t val = 0;
 	for (uint8_t i = 0; i < 8; i++, val >> 1) {
@@ -43,8 +43,8 @@ int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
 			perror("Error: sigsuspend");
 			return -1;
 		}
-		
-		switch(CAUGHT_SIG) {
+
+		switch (CAUGHT_SIG) {
 		case SIGUSR1:
 			break;
 		case SIGUSR2:
@@ -54,7 +54,7 @@ int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
 			fprintf(stderr, "Error: sender timed out\n");
 			return -1;
 		}
-		
+
 		if (kill(pid, SIGUSR1) == -1) {
 			perror("Error: kill");
 			return -1;
@@ -64,7 +64,7 @@ int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
 	return 0;
 }
 
-int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
+int byte_send(pid_t pid, uint8_t * val_p, sigset_t * set)
 {
 	uint8_t val = *val_p;
 	for (uint8_t i = 0; i < 8; i++, val >> 1) {
@@ -80,8 +80,8 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 			perror("Error: sigsuspend");
 			return -1;
 		}
-		
-		switch(CAUGHT_SIG) {
+
+		switch (CAUGHT_SIG) {
 		case SIGUSR1:
 			break;
 		case SIGALRM:
@@ -92,7 +92,7 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 	return 0;
 }
 
-int buf_send(pid_t pid, uint8_t *buf, size_t len, sigset_t *set)
+int buf_send(pid_t pid, uint8_t * buf, size_t len, sigset_t * set)
 {
 	for (size_t i = 0; i < len; i++) {
 		if (byte_send(pid, buf + i, set) == -1) {
@@ -103,7 +103,7 @@ int buf_send(pid_t pid, uint8_t *buf, size_t len, sigset_t *set)
 	return 0;
 }
 
-int buf_receive(pid_t pid, uint8_t *buf, size_t len, sigset_t *set)
+int buf_receive(pid_t pid, uint8_t * buf, size_t len, sigset_t * set)
 {
 	for (size_t i = 0; i < len; i++) {
 		if (byte_receive(pid, buf + i, set) == -1) {
@@ -124,28 +124,30 @@ int child(pid_t ppid, int fd)
 	sigdelset(&set, SIGALRM);
 	sigaction(SIGUSR1, &act, NULL);
 	sigaction(SIGALRM, &act, NULL);
-	
+
 	char *buf = malloc(BUF_SIZE);
 	if (buf == NULL) {
 		perror("Error: malloc");
 		return 0;
 	}
-	
+
 	ssize_t len;
 	do {
 		len = read(fd, buf, BUF_SIZE);
 		if (len == -1) {
 			perror("Error: read");
 			return -1;
-		} if (buf_send(ppid, (uint8_t*) &len, sizeof(len), &set) == -1) {
+		}
+		if (buf_send(ppid, (uint8_t *) &len, sizeof(len), &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
-		} if (len != 0 && buf_send(ppid, buf, len, &set) == -1) {
+		}
+		if (len != 0 && buf_send(ppid, buf, len, &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}
 	} while (len > 0);
-	
+
 	return 0;
 }
 
@@ -161,30 +163,32 @@ int parent(pid_t cpid, int fd)
 	sigaction(SIGUSR1, &act, NULL);
 	sigaction(SIGUSR2, &act, NULL);
 	sigaction(SIGALRM, &act, NULL);
-	
+
 	char *buf = malloc(BUF_SIZE);
 	if (buf == NULL) {
 		perror("Error: malloc");
 		return 0;
 	}
-	
+
 	ssize_t len;
 	do {
-		if (buf_receive(cpid, (uint8_t*) &len, sizeof(len), &set) == -1) {
+		if (buf_receive(cpid, (uint8_t *) &len, sizeof(len), &set) ==
+		    -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
-		} if (len != 0 && buf_receive(cpid, buf, len, &set) == -1) {
+		}
+		if (len != 0 && buf_receive(cpid, buf, len, &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
-		} if (len != 0 && memtofd_cpy(fd, buf, len) == -1) {
+		}
+		if (len != 0 && memtofd_cpy(fd, buf, len) == -1) {
 			fprintf(stderr, "Error: memtofd_cpy\n");
 			return -1;
 		}
 	} while (len > 0);
-	
+
 	return 0;
 }
-
 
 int main(int argc, char *argv[])
 {

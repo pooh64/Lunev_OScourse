@@ -2,12 +2,14 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>
-
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 const size_t BUF_SIZE = 512;
+int CAUGHT_SIG;
 
 ssize_t memtofd_cpy(int fd, const char *buf, size_t count)
 {
@@ -43,7 +45,11 @@ ssize_t fdtomem_cpy(int fd, char *buf, size_t count)
 	return count - len;
 }
 
-// sigalrm, sigusr1, sigusr2
+void handle_signal(int sig)
+{
+	CAUGHT_SIG = sig;
+}
+
 int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
 {
 	uint8_t val = 0;
@@ -62,20 +68,19 @@ int byte_receive(pid_t pid, uint8_t *val_p, sigset_t *set)
 			val |= 1 << i;
 			break;
 		case SIGALRM:
-			fprintf(stderr, "Error: dead sender\n");
+			fprintf(stderr, "Error: sender timed out\n");
 			return -1;
 		}
 		
 		if (kill(pid, SIGUSR1) == -1) {
 			perror("Error: kill");
-			fprintf(stderr, "Error: dead sender\n");
 			return -1;
 		}
 	}
+	*val_p = val;
 	return 0;
 }
 
-// sigusr1, sigalrm
 int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 {
 	uint8_t val = *val_p;
@@ -85,7 +90,7 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 			perror("Error: kill");
 			return -1;
 		}
-		
+
 		alarm(1);
 		sigsuspend(set);
 		if (errno != EINTR) {
@@ -97,7 +102,7 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 		case SIGUSR1:
 			break;
 		case SIGALRM:
-			fprintf(stderr, "Error: dead sender\n");
+			fprintf(stderr, "Error: receiver timed out\n");
 			return -1;
 		}
 	}
@@ -106,33 +111,58 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 
 int child(pid_t ppid, int fd)
 {
+	struct sigaction act = { };
+	act.sa_handler = &handle_signal;
 	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGUSR1);
-	sigaddset(&set, SIGALRM);
+	sigfillset(&set);
+	sigdelset(&set, SIGUSR1);
+	sigdelset(&set, SIGALRM);
+	sigaction(SIGUSR1, &act, NULL);
+	sigaction(SIGALRM, &act, NULL);
 	
 	char *buf = malloc(BUF_SIZE);
 	if (buf == NULL) {
 		perror("Error: malloc");
 		return 0;
 	}
+	
+	uint8_t tmp = 33;
+	
+	printf("sending: %u\n", (unsigned int) tmp);
+	
+	byte_send(ppid, &tmp, &set);
+	
+	printf("send done\n");
 	
 	return 0;
 }
 
 int parent(pid_t cpid)
 {
+	struct sigaction act = { };
+	act.sa_handler = &handle_signal;
 	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGUSR1);
-	sigaddset(&set, SIGUSR2);
-	sigaddset(&set, SIGALRM);
+	sigfillset(&set);
+	sigdelset(&set, SIGUSR1);
+	sigdelset(&set, SIGUSR2);
+	sigdelset(&set, SIGALRM);
+	sigaction(SIGUSR1, &act, NULL);
+	sigaction(SIGUSR2, &act, NULL);
+	sigaction(SIGALRM, &act, NULL);
 	
 	char *buf = malloc(BUF_SIZE);
 	if (buf == NULL) {
 		perror("Error: malloc");
 		return 0;
 	}
+	
+	uint8_t tmp;
+	
+	printf("receiving\n");
+	
+	byte_receive(cpid, &tmp, &set);
+	
+	printf("received: %u\n", (unsigned int) tmp);
 	
 	return 0;
 }
@@ -145,7 +175,7 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	int fd = open(path, O_RDONLY);
+	int fd = open(argv[1], O_RDONLY);
 	if (fd == -1) {
 		perror("Error: open");
 		return 0;

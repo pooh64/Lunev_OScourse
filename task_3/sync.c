@@ -25,8 +25,8 @@ int pair_capture(int semid, struct syncbuf self, struct syncbuf othr,
 	// Activate self
 	SOPBUF_ADD(othr.lock, -1, 0);
 	SOPBUF_ADD(othr.lock,  1, 0);
-	SOPBUF_ADD(self.actv,  1, SEM_UNDO);	/* This is not a start of cr. section */
-	if (SOPBUF_SEMOP() == -1) {
+	SOPBUF_ADD(self.actv,  1, SEM_UNDO);
+	if (SOPBUF_SEMOP() == -1) {		/* This is not a start of cr. section */
 		perror("Error: semop");
 		return -1;
 	}
@@ -61,8 +61,8 @@ int pair_release(int semid, struct syncbuf self, struct syncbuf othr)
 	SOPBUF_ADD(othr.actv,  1, 0);
 	SOPBUF_ADD(othr.done, -1, 0);
 	SOPBUF_ADD(othr.done,  1, 0);
-	SOPBUF_ADD(self.lock, -1, SEM_UNDO);	/* Leave critical section 1 */
-	if (SOPBUF_SEMOP() == -1) {
+	SOPBUF_ADD(self.lock, -1, SEM_UNDO);
+	if (SOPBUF_SEMOP() == -1) {		/* Leave critical section 1 */
 		if (errno == EAGAIN)
 			fprintf(stderr, "Error: othr process failed\n");
 		else

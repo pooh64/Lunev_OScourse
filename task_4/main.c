@@ -28,23 +28,6 @@ ssize_t memtofd_cpy(int fd, const char *buf, size_t count)
 	return count - len;
 }
 
-ssize_t fdtomem_cpy(int fd, char *buf, size_t count)
-{
-	ssize_t tmp = 1;
-	size_t len = count;
-	while (len && tmp) {
-		tmp = read(fd, buf, len);
-		if (tmp == -1) {
-			if (errno != EINTR)
-				return -1;
-		} else {
-			len -= tmp;
-			buf += tmp;
-		}
-	}
-	return count - len;
-}
-
 void handle_signal(int sig)
 {
 	CAUGHT_SIG = sig;
@@ -109,6 +92,28 @@ int byte_send(pid_t pid, uint8_t *val_p, sigset_t *set)
 	return 0;
 }
 
+int buf_send(pid_t pid, uint8_t *buf, size_t len, sigset_t *set)
+{
+	for (size_t i = 0; i < len; i++) {
+		if (byte_send(pid, buf + i, set) == -1) {
+			fprintf(stderr, "Error: byte_send\n");
+			return -1;
+		}
+	}
+	return 0;
+}
+
+int buf_receive(pid_t pid, uint8_t *buf, size_t len, sigset_t *set)
+{
+	for (size_t i = 0; i < len; i++) {
+		if (byte_receive(pid, buf + i, set) == -1) {
+			fprintf(stderr, "Error: byte_receive\n");
+			return -1;
+		}
+	}
+	return 0;
+}
+
 int child(pid_t ppid, int fd)
 {
 	struct sigaction act = { };
@@ -126,18 +131,25 @@ int child(pid_t ppid, int fd)
 		return 0;
 	}
 	
-	uint8_t tmp = 33;
-	
-	printf("sending: %u\n", (unsigned int) tmp);
-	
-	byte_send(ppid, &tmp, &set);
-	
-	printf("send done\n");
+	ssize_t len;
+	do {
+		len = read(fd, buf, BUF_SIZE);
+		if (len == -1) {
+			perror("Error: read");
+			return -1;
+		} if (buf_send(ppid, (uint8_t*) &len, sizeof(len), &set) == -1) {
+			fprintf(stderr, "Error: buf_send\n");
+			return -1;
+		} if (len != 0 && buf_send(ppid, buf, len, &set) == -1) {
+			fprintf(stderr, "Error: buf_send\n");
+			return -1;
+		}
+	} while (len > 0);
 	
 	return 0;
 }
 
-int parent(pid_t cpid)
+int parent(pid_t cpid, int fd)
 {
 	struct sigaction act = { };
 	act.sa_handler = &handle_signal;
@@ -156,13 +168,19 @@ int parent(pid_t cpid)
 		return 0;
 	}
 	
-	uint8_t tmp;
-	
-	printf("receiving\n");
-	
-	byte_receive(cpid, &tmp, &set);
-	
-	printf("received: %u\n", (unsigned int) tmp);
+	ssize_t len;
+	do {
+		if (buf_receive(cpid, (uint8_t*) &len, sizeof(len), &set) == -1) {
+			fprintf(stderr, "Error: buf_send\n");
+			return -1;
+		} if (len != 0 && buf_receive(cpid, buf, len, &set) == -1) {
+			fprintf(stderr, "Error: buf_send\n");
+			return -1;
+		} if (len != 0 && memtofd_cpy(fd, buf, len) == -1) {
+			fprintf(stderr, "Error: memtofd_cpy\n");
+			return -1;
+		}
+	} while (len > 0);
 	
 	return 0;
 }
@@ -201,7 +219,7 @@ int main(int argc, char *argv[])
 			return 0;
 		}
 	} else {
-		if (parent(cpid) == -1) {
+		if (parent(cpid, STDOUT_FILENO) == -1) {
 			fprintf(stderr, "Error: parent failed\n");
 			return 0;
 		}

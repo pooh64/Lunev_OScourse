@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 const size_t BUF_SIZE = 512;
+
 int CAUGHT_SIG;
 
 ssize_t memtofd_cpy(int fd, const char *buf, size_t count)
@@ -51,7 +52,11 @@ int byte_receive(pid_t pid, uint8_t * val_p, sigset_t * set)
 			val |= 1 << i;
 			break;
 		case SIGALRM:
-			fprintf(stderr, "Error: sender timed out\n");
+			fprintf(stderr, 
+				"Error: sender timed out (SIGALRM)\n");
+			return -1;
+		case SIGCHLD:
+			fprintf(stderr, "Error: sender is dead (SIGCHLD)\n");
 			return -1;
 		}
 
@@ -85,7 +90,8 @@ int byte_send(pid_t pid, uint8_t * val_p, sigset_t * set)
 		case SIGUSR1:
 			break;
 		case SIGALRM:
-			fprintf(stderr, "Error: receiver timed out\n");
+			fprintf(stderr, 
+				"Error: receiver timed out (SIGALRM)\n");
 			return -1;
 		}
 	}
@@ -138,11 +144,11 @@ int child(pid_t ppid, int fd)
 			perror("Error: read");
 			return -1;
 		}
-		if (buf_send(ppid, (uint8_t *) &len, sizeof(len), &set) == -1) {
+		if (buf_send(ppid, (uint8_t *) &len, sizeof(len)) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}
-		if (len != 0 && buf_send(ppid, buf, len, &set) == -1) {
+		if (len != 0 && buf_send(ppid, buf, len) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}
@@ -160,9 +166,11 @@ int parent(pid_t cpid, int fd)
 	sigdelset(&set, SIGUSR1);
 	sigdelset(&set, SIGUSR2);
 	sigdelset(&set, SIGALRM);
+	sigdelset(&set, SIGCHLD);
 	sigaction(SIGUSR1, &act, NULL);
 	sigaction(SIGUSR2, &act, NULL);
 	sigaction(SIGALRM, &act, NULL);
+	sigaction(SIGCHLD, &act, NULL);
 
 	char *buf = malloc(BUF_SIZE);
 	if (buf == NULL) {
@@ -172,8 +180,7 @@ int parent(pid_t cpid, int fd)
 
 	ssize_t len;
 	do {
-		if (buf_receive(cpid, (uint8_t *) &len, sizeof(len), &set) ==
-		    -1) {
+		if (buf_receive(cpid, (uint8_t *) &len, sizeof(len), &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}

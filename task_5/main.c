@@ -11,12 +11,11 @@
 
 const size_t PBUF_MAX = 1024;
 const size_t CBUF_SIZE = 1024;
-const int FD_CLOSED = -0xf00;
+const int FD_CLOSED = 0xdead;
 
 struct chld_t {
 	int to_chld[2];
 	int to_prnt[2];
-	int is_done[2];
 	char  *buf;
 	char  *buf_p;
 	size_t buf_s;
@@ -27,7 +26,7 @@ struct chld_t {
 
 #define HANDLE_ERR(expr, msg)						\
 do {									\
-	if ((expr) == -1)	{					\
+	if ((expr) == -1) {						\
 		fprintf(stderr, "Error: %s, line %d", msg, __LINE__);	\
 		exit(EXIT_FAILURE);					\
 	}								\
@@ -35,7 +34,7 @@ do {									\
 
 
 _Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr);
-void parent(unsigned n_chld, struct chld_t *carr);
+int parent(unsigned n_chld, struct chld_t *carr);
 
 int str_to_ulong(const char *str, unsigned long int *val_p)
 {
@@ -49,7 +48,6 @@ int str_to_ulong(const char *str, unsigned long int *val_p)
 }
 
 
-// last i -> buf_s == 1?
 size_t get_pbuf_size(unsigned num, unsigned n_chld)
 {
 	size_t buf_s = 1;
@@ -116,10 +114,11 @@ int transmission(int fd_inp, unsigned n_chld)
 	}
 	
 	parent(n_chld, carr);
+	free(carr);
 	return 0;
 }
 
-void parent(unsigned n_chld, struct chld_t *carr)
+int parent(unsigned n_chld, struct chld_t *carr)
 {
 	/* Close unused pipes */
 	for (unsigned i = 0; i < n_chld; i++) {
@@ -127,6 +126,8 @@ void parent(unsigned n_chld, struct chld_t *carr)
 		HANDLE_ERR(close(carr[i].to_prnt[1]), "close");
 		carr[i].to_chld[0] = FD_CLOSED;
 		carr[i].to_prnt[1] = FD_CLOSED;
+		if (carr[i].to_chld[1] != FD_CLOSED)
+			HANDLE_ERR(fcntl(carr[i].to_chld[1], F_SETFL, O_NONBLOCK | O_WRONLY), "fcntl");
 	}
 
 	HANDLE_ERR(prepare_buffers(n_chld, carr), "prepare_buffers");
@@ -141,7 +142,7 @@ void parent(unsigned n_chld, struct chld_t *carr)
 		n_fd = 0;
 		max_fd = 0;
 		for (int i = 0; i < n_chld; i++) {
-			if (carr[i].to_chld[1] != FD_CLOSED) {
+			if (carr[i].to_chld[1] != FD_CLOSED && carr[i - 1].buf_l != 0) {
 				FD_SET(carr[i].to_chld[1], &wfds);
 				max_fd = MAX(max_fd, carr[i].to_chld[1]);
 				n_fd++;
@@ -152,15 +153,14 @@ void parent(unsigned n_chld, struct chld_t *carr)
 				n_fd++;
 			}
 		}
-		
 		if (n_fd == 0)
 			break;
+			
 		n_fd = select(max_fd + 1, &rfds, &wfds, NULL, NULL);
 		HANDLE_ERR(n_fd, "select");
 
-		for (int i = 0; i < n_chld && n_fd != 0; i++) {
-			/* buf_s can be >> CBUF_SIZE, that's why I don't use memmove here */
-			if (FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l != 0) {
+		for (int i = 0; i < n_chld; i++) {
+			if (carr[i].to_chld[1] != FD_CLOSED && FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l != 0) {
 				len = write(carr[i].to_chld[1], carr[i - 1].buf_p, carr[i - 1].buf_l);
 				HANDLE_ERR(len, "write");
 				/* Refresh buffer */
@@ -168,31 +168,28 @@ void parent(unsigned n_chld, struct chld_t *carr)
 					carr[i - 1].buf_p = carr[i - 1].buf;
 				else
 					carr[i - 1].buf_p += len;
-				n_fd--;
-			}
-			
-			/* Writing done -> close fd_w */
-			if (FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l == 0 && carr[i - 1].to_prnt[0] == FD_CLOSED) {
-				HANDLE_ERR(close(carr[i].to_chld[1]), "close");
-				carr[i].to_chld[1] = FD_CLOSED;
 			}
 
 			len = (carr[i].buf + carr[i].buf_s) - (carr[i].buf_p + carr[i].buf_l);
-			if (FD_ISSET(carr[i].to_prnt[0], &rfds) && len != 0) {
+			if (carr[i].to_prnt[0] != FD_CLOSED && FD_ISSET(carr[i].to_prnt[0], &rfds) && len != 0) {
 				len = read(carr[i].to_prnt[0], carr[i].buf_p + carr[i].buf_l, len);
 				HANDLE_ERR(len, "read");
 				/* Refresh buffer */
 				carr[i].buf_l += len;
-				/* Done or dead child */
 				if (len == 0) {
 					HANDLE_ERR(close(carr[i].to_prnt[0]), "close");
 					carr[i].to_prnt[0] = FD_CLOSED;
 				}
-				n_fd--;
+			}
+			
+			/* Writing done -> close fd_w */
+			if (carr[i].to_chld[1] != FD_CLOSED && carr[i - 1].buf_l == 0 && carr[i - 1].to_prnt[0] == FD_CLOSED) {
+				HANDLE_ERR(close(carr[i].to_chld[1]), "close");
+				carr[i].to_chld[1] = FD_CLOSED;
 			}
 		}
 
-		// Write data to stdout if last len != 0, decrease len
+		/* Write data to stdout */
 		if (carr[n_chld - 1].buf_l != 0) {
 			len = write(STDOUT_FILENO, carr[n_chld - 1].buf_p, carr[n_chld - 1].buf_l);
 			HANDLE_ERR(len, "write");
@@ -203,6 +200,10 @@ void parent(unsigned n_chld, struct chld_t *carr)
 				carr[n_chld - 1].buf_p += len;	
 		}
 	}
+	
+	for (int i = 0; i < n_chld; i++)
+		free(carr[i].buf);
+	return 0;
 }
 
 _Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr)
@@ -234,7 +235,6 @@ _Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr)
 		HANDLE_ERR(write(fd_w, buf, len), "write");
 	} while (len);
 	
-	// possibly close and send done here (before closing fd_w!)
 	free(carr);
 	free(buf);
 	exit(EXIT_SUCCESS);

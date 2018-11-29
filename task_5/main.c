@@ -7,25 +7,35 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
+#include <assert.h>
 
 const size_t PBUF_MAX = 1024;
 const size_t CBUF_SIZE = 1024;
-const int FD_CLOSED = 0xdead;
+const int FD_CLOSED = -0xf00;
 
 struct chld_t {
 	int to_chld[2];
 	int to_prnt[2];
 	int is_done[2];
 	char  *buf;
+	char  *buf_p;
 	size_t buf_s;
 	size_t buf_l;
 };
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
+#define HANDLE_ERR(expr, msg)						\
+do {									\
+	if ((expr) == -1)	{					\
+		fprintf(stderr, "Error: %s, line %d", msg, __LINE__);	\
+		exit(EXIT_FAILURE);					\
+	}								\
+} while (0)
 
-void child(unsigned this, unsigned n_chld, struct chld_t *carr);
-int parent(unsigned n_chld, struct chld_t *carr);
+
+_Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr);
+void parent(unsigned n_chld, struct chld_t *carr);
 
 int str_to_ulong(const char *str, unsigned long int *val_p)
 {
@@ -37,7 +47,6 @@ int str_to_ulong(const char *str, unsigned long int *val_p)
 		return -1;
 	return 0;
 }
-
 
 
 // last i -> buf_s == 1?
@@ -57,6 +66,7 @@ int prepare_buffers(unsigned n_chld, struct chld_t *carr)
 	for (unsigned i = 0; i < n_chld; i++) {
 		carr[i].buf_s = get_pbuf_size(i, n_chld);
 		carr[i].buf = malloc(carr[i].buf_s);
+		carr[i].buf_p = carr[i].buf;
 		if (carr[i].buf == NULL) {
 			perror("Error: malloc");
 			return -1;
@@ -105,34 +115,38 @@ int transmission(int fd_inp, unsigned n_chld)
 			child(i, n_chld, carr);
 	}
 	
-	if (parent(n_chld, carr) == -1) {
-		free(carr);
-		return -1;
-	}
+	parent(n_chld, carr);
 	return 0;
 }
 
-int parent(unsigned n_chld, struct chld_t *carr)
+void parent(unsigned n_chld, struct chld_t *carr)
 {
-	if (prepare_buffers(n_chld, carr) == -1) {
-		free(carr);
-		return -1;
+	/* Close unused pipes */
+	for (unsigned i = 0; i < n_chld; i++) {
+		HANDLE_ERR(close(carr[i].to_chld[0]), "close");
+		HANDLE_ERR(close(carr[i].to_prnt[1]), "close");
+		carr[i].to_chld[0] = FD_CLOSED;
+		carr[i].to_prnt[1] = FD_CLOSED;
 	}
 
-	int max_fd, n_fd;
-	fd_set rfds, wfds;
+	HANDLE_ERR(prepare_buffers(n_chld, carr), "prepare_buffers");
 
 	while (1) {
+		int max_fd, n_fd;
+		fd_set rfds, wfds;
+		ssize_t len;
+		/* Prepare fds */
 		FD_ZERO(&rfds);
 		FD_ZERO(&wfds);
-		/* Prepare fds */
+		n_fd = 0;
+		max_fd = 0;
 		for (int i = 0; i < n_chld; i++) {
-			if (carr[i].to_chld[1] != FD_CLOSED && carr[i - 1].buf_l != 0) {
-				FD_SET(carr[i].to_child[1], &wfds);
+			if (carr[i].to_chld[1] != FD_CLOSED) {
+				FD_SET(carr[i].to_chld[1], &wfds);
 				max_fd = MAX(max_fd, carr[i].to_chld[1]);
 				n_fd++;
 			}
-			if (carr[i].to_prnt[0] != FD_CLOSED && carr[i].buf_l == 0) {
+			if (carr[i].to_prnt[0] != FD_CLOSED) {
 				FD_SET(carr[i].to_prnt[0], &rfds);
 				max_fd = MAX(max_fd, carr[i].to_prnt[0]);
 				n_fd++;
@@ -141,66 +155,84 @@ int parent(unsigned n_chld, struct chld_t *carr)
 		
 		if (n_fd == 0)
 			break;
+		n_fd = select(max_fd + 1, &rfds, &wfds, NULL, NULL);
+		HANDLE_ERR(n_fd, "select");
 
-		int ret_select = select(maxfd + 1, &rfds, &wfds, NULL, NULL);
-		if (ret_select == -1) {		
-			perror("Error: select");
-			return -1;
+		for (int i = 0; i < n_chld && n_fd != 0; i++) {
+			/* buf_s can be >> CBUF_SIZE, that's why I don't use memmove here */
+			if (FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l != 0) {
+				len = write(carr[i].to_chld[1], carr[i - 1].buf_p, carr[i - 1].buf_l);
+				HANDLE_ERR(len, "write");
+				/* Refresh buffer */
+				if ((carr[i - 1].buf_l -= len) == 0)
+					carr[i - 1].buf_p = carr[i - 1].buf;
+				else
+					carr[i - 1].buf_p += len;
+				n_fd--;
+			}
+			
+			/* Writing done -> close fd_w */
+			if (FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l == 0 && carr[i - 1].to_prnt[0] == FD_CLOSED) {
+				HANDLE_ERR(close(carr[i].to_chld[1]), "close");
+				carr[i].to_chld[1] = FD_CLOSED;
+			}
+
+			len = (carr[i].buf + carr[i].buf_s) - (carr[i].buf_p + carr[i].buf_l);
+			if (FD_ISSET(carr[i].to_prnt[0], &rfds) && len != 0) {
+				len = read(carr[i].to_prnt[0], carr[i].buf_p + carr[i].buf_l, len);
+				HANDLE_ERR(len, "read");
+				/* Refresh buffer */
+				carr[i].buf_l += len;
+				/* Done or dead child */
+				if (len == 0) {
+					HANDLE_ERR(close(carr[i].to_prnt[0]), "close");
+					carr[i].to_prnt[0] = FD_CLOSED;
+				}
+				n_fd--;
+			}
 		}
 
-		for (int i = 0; i < n_chld; i++) {
-			/*
-			 * if isset fd_r
-			 * 	read to this buffer
-			 *	if read == 0
-			 *		(check done) close fd_w to next and this fd
-			 *
-			 * if isset fd_w
-			 * 	write from prev buffer
-			 *
-			 * Every time do n_fd-- and exit when it's eq to 0
-			*/
+		// Write data to stdout if last len != 0, decrease len
+		if (carr[n_chld - 1].buf_l != 0) {
+			len = write(STDOUT_FILENO, carr[n_chld - 1].buf_p, carr[n_chld - 1].buf_l);
+			HANDLE_ERR(len, "write");
+			/* Refresh buffer */
+			if ((carr[n_chld - 1].buf_l -= len) == 0)
+				carr[n_chld - 1].buf_p = carr[n_chld - 1].buf;
+			else
+				carr[n_chld - 1].buf_p += len;	
 		}
-
-		// Write data to stdout if last len != 0, decrease
 	}
 }
 
-void child(unsigned this, unsigned n_chld, struct chld_t *carr)
+_Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr)
 {
 	/* Close unused pipes */
-	for (unsigned i = 1; i < n_chld; i++) {
+	for (unsigned i = 0; i < n_chld; i++) {
 		if (i != 0)
-			close(carr[i].to_chld[1]);
-		close(carr[i].to_prnt[0]);
+			HANDLE_ERR(close(carr[i].to_chld[1]), "close");
+		HANDLE_ERR(close(carr[i].to_prnt[0]), "close");
 		if (i != this) {
-			close(carr[i].to_chld[0]);
-			close(carr[i].to_prnt[1]);
+			HANDLE_ERR(close(carr[i].to_chld[0]), "close");
+			HANDLE_ERR(close(carr[i].to_prnt[1]), "close");
 		}
 	}
 
 	void *buf = malloc(CBUF_SIZE);
+	if (buf == NULL) {
+		perror("Error: malloc");
+		exit(EXIT_FAILURE);
+	}
 	ssize_t len;
 	int fd_r = carr[this].to_chld[0];
 	int fd_w = carr[this].to_prnt[1];
 	char msg_ok = 0;
 
-	printf("Child %u ready!\n", this);
-
 	do {
 		len = read(fd_r, buf, CBUF_SIZE);
-		if (len == -1) {
-			perror("Error: read");
-			exit(EXIT_FAILURE);
-		}
-		printf("Child %u: %zu bytes (%.*s)\n", this, len, len, buf);
-		if (write(fd_w, buf, len) == -1) {
-			fprintf(stderr, "Error: memtofd_cpy failed\n");
-			exit(EXIT_FAILURE);
-		}
+		HANDLE_ERR(len, "read");
+		HANDLE_ERR(write(fd_w, buf, len), "write");
 	} while (len);
-
-	printf("Child %u exit!\n", this);
 	
 	// possibly close and send done here (before closing fd_w!)
 	free(carr);

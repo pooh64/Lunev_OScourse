@@ -34,8 +34,8 @@ int pair_capture(int semid, struct syncbuf self, struct syncbuf othr,
 	// Wait until the other is activated
 	SOPBUF_ADD(othr.lock, -1, IPC_NOWAIT);
 	SOPBUF_ADD(othr.lock,  1, 0);
-	SOPBUF_ADD(othr.actv, -1, 0);
-	SOPBUF_ADD(othr.actv,  1, 0);
+	SOPBUF_ADD(othr.actv, -1, 0);		/* Other process mush finish init, otherwise -> race condition */
+	SOPBUF_ADD(othr.actv,  1, 0);		/* Only pair can pass barier */
 	if (SOPBUF_SEMOP() == -1) {
 		perror("Error: semop");
 		return -1;

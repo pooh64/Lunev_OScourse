@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <assert.h>
 
-const size_t PBUF_MAX = 1024;
+const size_t PBUF_MAX_SIZE = 1024 * 128;
 const size_t CBUF_SIZE = 1024;
 const int FD_CLOSED = 0xdead;
 
@@ -27,14 +27,21 @@ struct chld_t {
 #define HANDLE_ERR(expr, msg)						\
 do {									\
 	if ((expr) == -1) {						\
-		fprintf(stderr, "Error: %s, line %d", msg, __LINE__);	\
+		fprintf(stderr, "Error: %s, line %d\n", msg, __LINE__);	\
 		exit(EXIT_FAILURE);					\
 	}								\
 } while (0)
 
 
-_Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr);
+int transmission(int fd_inp, unsigned n_chld);
+int prepare_pipes(int fd_inp, unsigned n_chld, struct chld_t *carr);
+
 int parent(unsigned n_chld, struct chld_t *carr);
+size_t get_pbuf_size(unsigned num, unsigned n_chld);
+int prepare_buffers(unsigned n_chld, struct chld_t *carr);
+
+_Noreturn void child(unsigned this, unsigned n_chld, struct chld_t *carr);
+
 
 int str_to_ulong(const char *str, unsigned long int *val_p)
 {
@@ -50,11 +57,11 @@ int str_to_ulong(const char *str, unsigned long int *val_p)
 
 size_t get_pbuf_size(unsigned num, unsigned n_chld)
 {
-	size_t buf_s = 1;
+	size_t buf_s = 1024;
 	for (unsigned i = 0; i < n_chld - num; i++) {
 		buf_s *= 3;
-		if (buf_s > PBUF_MAX)
-			return PBUF_MAX;
+		if (buf_s > PBUF_MAX_SIZE)
+			return PBUF_MAX_SIZE;
 	}
 	return buf_s;
 }
@@ -118,6 +125,7 @@ int transmission(int fd_inp, unsigned n_chld)
 	return 0;
 }
 
+
 int parent(unsigned n_chld, struct chld_t *carr)
 {
 	/* Close unused pipes */
@@ -126,6 +134,8 @@ int parent(unsigned n_chld, struct chld_t *carr)
 		HANDLE_ERR(close(carr[i].to_prnt[1]), "close");
 		carr[i].to_chld[0] = FD_CLOSED;
 		carr[i].to_prnt[1] = FD_CLOSED;
+		if (carr[i].to_prnt[0] != FD_CLOSED)
+			HANDLE_ERR(fcntl(carr[i].to_prnt[0], F_SETFL, O_NONBLOCK | O_WRONLY), "fcntl");
 		if (carr[i].to_chld[1] != FD_CLOSED)
 			HANDLE_ERR(fcntl(carr[i].to_chld[1], F_SETFL, O_NONBLOCK | O_WRONLY), "fcntl");
 	}
@@ -147,7 +157,8 @@ int parent(unsigned n_chld, struct chld_t *carr)
 				max_fd = MAX(max_fd, carr[i].to_chld[1]);
 				n_fd++;
 			}
-			if (carr[i].to_prnt[0] != FD_CLOSED) {
+			len = (carr[i].buf + carr[i].buf_s) - (carr[i].buf_p + carr[i].buf_l);
+			if (carr[i].to_prnt[0] != FD_CLOSED && len != 0) {
 				FD_SET(carr[i].to_prnt[0], &rfds);
 				max_fd = MAX(max_fd, carr[i].to_prnt[0]);
 				n_fd++;
@@ -160,6 +171,7 @@ int parent(unsigned n_chld, struct chld_t *carr)
 		HANDLE_ERR(n_fd, "select");
 
 		for (int i = 0; i < n_chld; i++) {
+			/* Write data from previous buffer */
 			if (carr[i].to_chld[1] != FD_CLOSED && FD_ISSET(carr[i].to_chld[1], &wfds) && carr[i - 1].buf_l != 0) {
 				len = write(carr[i].to_chld[1], carr[i - 1].buf_p, carr[i - 1].buf_l);
 				HANDLE_ERR(len, "write");
@@ -170,6 +182,7 @@ int parent(unsigned n_chld, struct chld_t *carr)
 					carr[i - 1].buf_p += len;
 			}
 
+			/* Read data to this buffer */
 			len = (carr[i].buf + carr[i].buf_s) - (carr[i].buf_p + carr[i].buf_l);
 			if (carr[i].to_prnt[0] != FD_CLOSED && FD_ISSET(carr[i].to_prnt[0], &rfds) && len != 0) {
 				len = read(carr[i].to_prnt[0], carr[i].buf_p + carr[i].buf_l, len);
@@ -182,7 +195,7 @@ int parent(unsigned n_chld, struct chld_t *carr)
 				}
 			}
 			
-			/* Writing done -> close fd_w */
+			/* Nothing to read -> close fd_w */
 			if (carr[i].to_chld[1] != FD_CLOSED && carr[i - 1].buf_l == 0 && carr[i - 1].to_prnt[0] == FD_CLOSED) {
 				HANDLE_ERR(close(carr[i].to_chld[1]), "close");
 				carr[i].to_chld[1] = FD_CLOSED;

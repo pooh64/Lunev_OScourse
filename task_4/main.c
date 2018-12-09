@@ -52,8 +52,7 @@ int byte_receive(pid_t pid, uint8_t * val_p, sigset_t * set)
 			val |= 1 << i;
 			break;
 		case SIGALRM:
-			fprintf(stderr, 
-				"Error: sender timed out (SIGALRM)\n");
+			fprintf(stderr, "Error: sender timed out (SIGALRM)\n");
 			return -1;
 		case SIGCHLD:
 			fprintf(stderr, "Error: sender is dead (SIGCHLD)\n");
@@ -144,11 +143,11 @@ int child(pid_t ppid, int fd)
 			perror("Error: read");
 			return -1;
 		}
-		if (buf_send(ppid, (uint8_t *) &len, sizeof(len)) == -1) {
+		if (buf_send(ppid, (uint8_t *) &len, sizeof(len), &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}
-		if (len != 0 && buf_send(ppid, buf, len) == -1) {
+		if (len != 0 && buf_send(ppid, buf, len, &set) == -1) {
 			fprintf(stderr, "Error: buf_send\n");
 			return -1;
 		}

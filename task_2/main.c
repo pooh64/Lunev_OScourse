@@ -6,21 +6,20 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 
-
 int child(int qid, pid_t n)
 {
-	// Wait for msg with type = n
-	long msg = (long) n;
+	/* Wait for msg with type = n */
+	long msg = (long)n;
 	if (msgrcv(qid, &msg, 0, msg, 0) == -1) {
 		perror("Error: child: msgrcv");
 		return -1;
 	}
 
-	printf("n = %5d pid = %5ld\n", n, (long) getpid());
+	printf("n = %5d pid = %5ld\n", n, (long)getpid());
 	fflush(stdout);
 
-	// Send msg with type = n + 1
-	msg = (long) n + 1;
+	/* Send msg with type = n + 1 */
+	msg = (long)n + 1;
 	if (msgsnd(qid, &msg, 0, 0) == -1) {
 		perror("Error: child: msgsnd");
 		return -1;
@@ -29,15 +28,15 @@ int child(int qid, pid_t n)
 }
 
 int parent(int n)
-{	
-	// Create msg queue
+{
+	/* Create msg queue */
 	int qid = msgget(IPC_PRIVATE, 0644);
 	if (qid == -1) {
 		perror("Error: msgget");
 		return -1;
 	}
 
-	// Create childs
+	/* Create childs */
 	pid_t cur, first;
 	for (pid_t i = 0; i < n; i++) {
 		cur = fork();
@@ -55,27 +54,30 @@ int parent(int n)
 
 	printf("--------Childs:--------\n");
 	long msg = 1;
-	// Send msg to first child
+
+	/* Send msg to first child */
 	if (msgsnd(qid, &msg, 0, 0) == -1) {
 		perror("msgsnd");
 		msgctl(qid, IPC_RMID, NULL);
 		return -1;
 	}
-	// Receive msg from last child
+
+	/* Receive msg from last child */
 	if (msgrcv(qid, &msg, 0, n + 1, 0) == -1) {
 		perror("msgrcv");
 		msgctl(qid, IPC_RMID, NULL);
 		return -1;
 	}
+
 	printf("--------\\Childs--------\n");
-	// Close msg queue
+
+	/* Close msg queue */
 	if (msgctl(qid, IPC_RMID, NULL) == -1) {
 		perror("msgctl");
 		return -1;
 	}
 	return 0;
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -94,6 +96,6 @@ int main(int argc, char *argv[])
 
 	if (parent(n) == -1)
 		fprintf(stderr, "Error: parent failed\n");
-	
+
 	return 0;
 }

@@ -4,7 +4,6 @@
 #include <sys/sem.h>
 #include <sys/shm.h>
 #include <unistd.h>
-
 #include <stdio.h>
 #include <errno.h>
 

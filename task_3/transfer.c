@@ -5,8 +5,8 @@
 const char KEY_PATHNAME[] = "key.key";
 
 enum SEM_NUMS {
-	SEM_FILL,		// Do not use with SEM_UNDO!
-	SEM_EMPTY,		// Do not use with SEM_UNDO!
+	SEM_FILL,
+	SEM_EMPTY,
 
 	SEM_SND_LOCK,
 	SEM_SND_ACTV,
@@ -61,7 +61,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size,
 	ssize_t len;
 
 	do {
-		// Check othr process, p(empty)
+		/* Check othr process, p(empty) */
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
 		SOPBUF_ADD(othr.actv, 1, 0);
 		SOPBUF_ADD(SEM_EMPTY, -1, 0);
@@ -81,7 +81,7 @@ int sender_run(int semid, struct syncbuf othr, void *shm, size_t shm_size,
 		}
 		*(ssize_t *) shm = len;
 
-		// v(fill)
+		/* v(fill) */
 		SOPBUF_ADD(SEM_FILL, 1, 0);
 		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 3 */
 			perror("Error: semop");
@@ -98,7 +98,7 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 	ssize_t len;
 
 	do {
-		// Check othr process, p(fill)
+		/* Check othr process, p(fill) */
 		SOPBUF_ADD(othr.actv, -1, IPC_NOWAIT);
 		SOPBUF_ADD(othr.actv, 1, 0);
 		SOPBUF_ADD(SEM_FILL, -1, 0);
@@ -120,13 +120,14 @@ int receiver_run(int semid, struct syncbuf othr, void *shm, int fd)
 			fprintf(stderr, "Error: memtofd_cpy failed\n");
 			exit(EXIT_FAILURE);
 		}
-		// v(empty)
+
+		/* v(empty) */
 		SOPBUF_ADD(SEM_EMPTY, 1, 0);
 		if (SOPBUF_SEMOP() == -1) {	/* Leave critical section 3 */
 			perror("Error: semop\n");
 			exit(EXIT_FAILURE);
 		}
-	} while (len > 0);
+	} while (len > 0);			/* Leave critical section 2 */
 	return 0;
 }
 
@@ -149,16 +150,18 @@ int sender_init_run(int semid)
 int sender(int semid, struct syncbuf self, struct syncbuf othr, void *shm,
 	   size_t shm_size, int fd)
 {
-	// Capture and sync pair
+	/* Capture and sync pair */
 	if (pair_capture(semid, self, othr, &sender_init_run) == -1) {
 		fprintf(stderr, "Error: pair_capture\n");
 		return -1;
 	}
-	// Run
+
+	/* Run */
 	int tmp = sender_run(semid, othr, shm, shm_size, fd);
 	if (tmp == -1)
 		fprintf(stderr, "Error: sender_run failed\n");
-	// Unlock pair
+
+	/* Unlock pair */
 	if (pair_release(semid, self, othr) == -1) {
 		perror("Error: pair_release");
 		return -1;
@@ -171,16 +174,18 @@ int sender(int semid, struct syncbuf self, struct syncbuf othr, void *shm,
 int receiver(int semid, struct syncbuf self, struct syncbuf othr, void *shm,
 	     int fd)
 {
-	// Capture and sync pair
+	/* Capture and sync pair */
 	if (pair_capture(semid, self, othr, NULL) == -1) {
 		fprintf(stderr, "Error: pair_capture\n");
 		return -1;
 	}
-	// Run
+
+	/* Run */
 	int tmp = receiver_run(semid, othr, shm, fd);
 	if (tmp == -1)
 		fprintf(stderr, "Error: reciever_run failed\n");
-	// Unlock pair
+
+	/* Unlock pair */
 	if (pair_release(semid, self, othr) == -1) {
 		perror("Error: pair_release");
 		return -1;

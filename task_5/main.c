@@ -32,7 +32,6 @@ do {									\
 	}								\
 } while (0)
 
-
 int transmission(int fd_inp, unsigned n_chld);
 int prepare_pipes(int fd_inp, unsigned n_chld, struct chld_t *carr);
 
@@ -53,7 +52,6 @@ int str_to_ulong(const char *str, unsigned long int *val_p)
 		return -1;
 	return 0;
 }
-
 
 size_t get_pbuf_size(unsigned num, unsigned n_chld)
 {
@@ -124,7 +122,6 @@ int transmission(int fd_inp, unsigned n_chld)
 	free(carr);
 	return 0;
 }
-
 
 int parent(unsigned n_chld, struct chld_t *carr)
 {
